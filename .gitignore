@@ -6,5 +6,7 @@ Release/
 
 # Dev/Windows — generated/installed artifacts
 Dev/Windows/node_modules/
-Dev/Windows/dist/
+Dev/Windows/dist/assets/
+Dev/Windows/dist/favicon.svg
+Dev/Windows/dist/icons.svg
 Dev/Windows/release/

@@ -178,6 +178,11 @@ function createWindow() {
   // Windows 上設較高的置頂層級，避免被全螢幕視窗蓋住
   win.setAlwaysOnTop(true, 'screen-saver')
 
+  // 防止 HTML <title> 更新視窗標題（避免 Windows DWM caption 顯示原開發者的內部命名）
+  win.webContents.on('page-title-updated', (e) => {
+    e.preventDefault()
+  })
+
   const { screen } = require('electron')
   const { workArea } = screen.getPrimaryDisplay()
   win.setPosition(workArea.x + workArea.width - 240, workArea.y + workArea.height - 340)
@@ -275,5 +280,6 @@ function createWindow() {
   ipcMain.on('window-close', () => app.quit())
 }
 
+Menu.setApplicationMenu(null)   // 移除 Electron 預設選單列（避免 Windows 顯示選單列）
 app.whenReady().then(createWindow)
 app.on('window-all-closed', () => app.quit())

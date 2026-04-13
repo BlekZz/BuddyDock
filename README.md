@@ -34,13 +34,11 @@
 
 ## 下載
 
-前往 [Releases](../../releases) 下載對應平台的安裝檔：
-
-| 檔案 | 平台 | 說明 |
+| 檔案 | 平台 | 連結 |
 |---|---|---|
-| `BuddyDock-1.0.3-ver.animals.dmg` | macOS 12+ | 磁碟映像，拖曳安裝 |
-| `BuddyDock-1.0.3-setup.exe` | Windows 10/11 64-bit | 一鍵靜默安裝 |
-| `BuddyDock-1.0.3-portable.exe` | Windows 10/11 64-bit | 免安裝，雙擊即用 |
+| `BuddyDock-1.0.3-ver.animals.dmg` | macOS 12+ | [下載](https://drive.google.com/open?id=17OYXdb0h9BQjWrlznUCBlR72vsQ6Xkw2) |
+| `BuddyDock-1.0.3-setup.exe` | Windows 10/11 64-bit（安裝版） | [下載](https://drive.google.com/open?id=1KBTKDc-9oA5EESaKDTicd-dicgWKx1AW) |
+| `BuddyDock-1.0.3-portable.exe` | Windows 10/11 64-bit（免安裝） | [下載](https://drive.google.com/open?id=1NxTmmziXK2eAWjCGYAfw05ZorsEp4OPT) |
 
 ---
 

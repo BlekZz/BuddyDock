@@ -64,6 +64,8 @@ Windows 的透明視窗需要額外設定，開發時請確保：
 }
 ```
 
+**⚠️ 禁止加入 `thickFrame: false`：** 此選項雖然可在部分 Electron 文件中看到，但在 `transparent: true` 組合下會導致 DWM 將 client area 計算為 0——renderer 畫面完全不顯示（寵物消失）。Windows 端的 DWM caption overlay 問題需透過 `WS_EX_NOACTIVATE` Win32 patch 解決，見開發手冊 0.6 節。
+
 ### 2.5 alwaysOnTop 設定
 
 ```js
@@ -119,14 +121,17 @@ cd Dev/Windows
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
 ```
 
-**Windows 端必須保留的四處修改（勿覆蓋）：**
+**Windows 端必須保留的修改（勿覆蓋）：**
 
 | 位置 | 修改內容 | 原因 |
 |---|---|---|
 | Tray 建立 | 移除 `icon.setTemplateImage(true)` | macOS 專用 API |
 | BrowserWindow | 加入 `backgroundColor: '#00000000'` | Windows 透明視窗需要 |
-| BrowserWindow | 加入 `thickFrame: false` | 防止失焦時 DWM 繪製 caption overlay（標題列鬼影） |
 | alwaysOnTop | 改為 `win.setAlwaysOnTop(true, 'screen-saver')` | 覆蓋全螢幕應用 |
+| Win32 patch block | 啟動時套用 `WS_EX_NOACTIVATE` + `SetWindowTheme`；`blur` 事件 re-apply；`focus` 事件偵測 input 自動 blur | 防止失焦時 DWM 繪製 caption overlay（標題列鬼影）；需要 `koffi` 依賴 |
+| `.electronignore` | 專案根目錄建立此檔 | 防止 electron-builder 讀取父目錄 `.gitignore` 而漏掉 `dist/assets/` |
+
+> **⚠️ 注意：`thickFrame: false` 不是有效修法。** 此選項會導致 DWM 將 client area 計算為 0，寵物完全消失。禁止使用。詳見逆向工程書第 0.6 節。
 
 ### 步驟三：複製到 Release 資料夾
 
@@ -479,3 +484,4 @@ git push
 | 1.0.0 | 2026-04-10 | 首次發佈；語錄清單建立 / 編輯 / 匯入匯出；定時提醒與日程提醒；自動換句；心情動畫；螢幕邊緣智慧泡泡定位；關於開發者頁面 | |
 | 1.0.1 | 2026-04-10 | 修正設定頁三分頁高度不一致；右鍵選單文案調整；收藏語錄功能；靜音時段；背單字記憶功能（智慧頻率演算法） | |
 | 1.0.3 | 2026-04-12 | 設定頁清單區塊視覺重設計（卡片分區、垃圾桶圖示）；新增清單改為 ＋ 按鈕；匯入功能修正（自動偵測類型、修復重複 ID） | Windows 移植同步發佈 |
+| 1.0.3 | 2026-04-14 | — | Windows patch：修正失焦時 DWM caption overlay（標題列鬼影）；根因為 focus 轉換觸發；透過 WS_EX_NOACTIVATE + blur/focus 事件管理解決；新增 koffi 依賴；新增 `.electronignore` 修正 dist/assets 遭父目錄 .gitignore 排除問題 |

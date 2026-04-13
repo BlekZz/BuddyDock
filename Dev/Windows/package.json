@@ -28,11 +28,15 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "requestedExecutionLevel": "asInvoker"
@@ -51,5 +55,8 @@
   "devDependencies": {
     "electron": "^35.0.0",
     "electron-builder": "^25.0.0"
+  },
+  "dependencies": {
+    "koffi": "^2.15.6"
   }
 }

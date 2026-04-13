@@ -167,7 +167,6 @@ function createWindow() {
     hasShadow: false,
     resizable: false,
     skipTaskbar: true,
-    thickFrame: false,              // 停用 DWM thick frame，避免失焦時出現 caption overlay
     backgroundColor: '#00000000',   // Windows 透明視窗需明確指定
     webPreferences: {
       nodeIntegration: false,
@@ -179,10 +178,64 @@ function createWindow() {
   // Windows 上設較高的置頂層級，避免被全螢幕視窗蓋住
   win.setAlwaysOnTop(true, 'screen-saver')
 
-  // 防止 HTML <title> 更新視窗標題（避免 Windows DWM caption 顯示原開發者的內部命名）
+  // 防止 renderer 更新視窗標題
   win.webContents.on('page-title-updated', (e) => {
     e.preventDefault()
   })
+
+  // Win32：清除 visual theme + 移除 caption 相關 window style
+  // 原因：transparent+frame:false 在 Windows 11 底層仍保留 WS_THICKFRAME（DWM 合成需要），
+  //       導致 DWM 在視窗上繪製 caption overlay。
+  //       SetWindowTheme('','') 告訴 Windows「此視窗無 visual theme」，DWM 即停止繪製 caption。
+  //       同時移除 WS_MAXIMIZEBOX/MINIMIZEBOX/SYSMENU，讓 Windows 11 Snap Layout 不觸發。
+  // Win32：WS_EX_NOACTIVATE 讓視窗不成為 active window，避免 Windows 11 畫 caption badge。
+  // 問題：settings 面板的 input 輸入時，Chromium 內部會 call SetFocus() 繞過 WS_EX_NOACTIVATE。
+  // 解法：
+  //   1. startup 時套用完整 patch
+  //   2. blur 時立即 re-apply WS_EX_NOACTIVATE（讓 badge 消失）
+  //   3. focus 時若沒有 input 在作用中，立即 blur（避免非輸入點擊留在 active 狀態）
+  try {
+    const koffi   = require('koffi')
+    const user32  = koffi.load('user32.dll')
+    const uxtheme = koffi.load('uxtheme.dll')
+
+    const GetWindowLongW = user32.func('int GetWindowLongW(uint64 hWnd, int nIndex)')
+    const SetWindowLongW = user32.func('int SetWindowLongW(uint64 hWnd, int nIndex, int dwNewLong)')
+    const SetWindowPos   = user32.func('int SetWindowPos(uint64 hWnd, uint64 hWndAfter, int x, int y, int cx, int cy, uint32 uFlags)')
+    const SetWindowTheme = uxtheme.func('int SetWindowTheme(uint64 hwnd, str16 pszSubAppName, str16 pszSubIdList)')
+
+    const hwnd = win.getNativeWindowHandle().readBigUInt64LE(0)
+
+    const applyNoActivate = () => {
+      const ex = GetWindowLongW(hwnd, -20)
+      SetWindowLongW(hwnd, -20, ex | 0x08000000)          // +WS_EX_NOACTIVATE
+      SetWindowPos(hwnd, BigInt(0), 0, 0, 0, 0, 0x0037)
+    }
+
+    // 完整初始化
+    const style = GetWindowLongW(hwnd, -16)
+    SetWindowLongW(hwnd, -16, style & ~(0x00010000 | 0x00020000 | 0x00080000))  // -MAXIMIZEBOX/-MINIMIZEBOX/-SYSMENU
+    applyNoActivate()
+    SetWindowTheme(hwnd, '', '')
+
+    // blur 時立即 re-apply，badge 一出現就消失
+    win.on('blur', applyNoActivate)
+
+    // focus 時若沒有 input 在作用中（非輸入點擊），50ms 後立即 blur
+    win.on('focus', () => {
+      setTimeout(async () => {
+        if (win.isDestroyed()) return
+        try {
+          const inputActive = await win.webContents.executeJavaScript(
+            '(document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA")'
+          )
+          if (!inputActive) win.blur()
+        } catch (_) {}
+      }, 50)
+    })
+  } catch (e) {
+    console.error('[BuddyDock] Win32 patch failed:', e?.message ?? e)
+  }
 
   const { screen } = require('electron')
   const { workArea } = screen.getPrimaryDisplay()

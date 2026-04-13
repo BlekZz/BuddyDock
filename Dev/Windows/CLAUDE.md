@@ -57,13 +57,30 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
 
 ## Porting Changes from macOS Original (`electron/main.cjs`)
 
-Only three changes were made. Everything else was copied verbatim.
+| Change | Reason |
+|---|---|
+| Removed `icon.setTemplateImage(true)` from Tray creation | macOS-only API; throws on Windows |
+| Added `backgroundColor: '#00000000'` to BrowserWindow | Transparent windows on Windows need explicit transparent background colour |
+| Changed to `win.setAlwaysOnTop(true, 'screen-saver')` | Raises the window above full-screen apps on Windows |
+| Added Win32 koffi patch block (see below) | Fix DWM caption overlay (title bar ghost) on focus loss |
 
-| Line | Change | Reason |
-|---|---|---|
-| Tray creation | Removed `icon.setTemplateImage(true)` | macOS-only API; throws on Windows |
-| BrowserWindow | Added `backgroundColor: '#00000000'` | Transparent windows on Windows need explicit transparent background colour |
-| alwaysOnTop | Changed to `win.setAlwaysOnTop(true, 'screen-saver')` | Raises the window above full-screen apps on Windows |
+### Win32 patch block summary
+
+Applies at startup and on Electron `blur`/`focus` events:
+
+1. **Startup**: Remove `WS_MAXIMIZEBOX / WS_MINIMIZEBOX / WS_SYSMENU` from `GWL_STYLE`; add `WS_EX_NOACTIVATE (0x08000000)` to `GWL_EXSTYLE`; call `SetWindowTheme(hwnd, '', '')` to strip visual theme.
+2. **`blur` event**: Re-apply `WS_EX_NOACTIVATE` immediately — clears the caption badge as soon as it appears.
+3. **`focus` event**: After 50ms, check `document.activeElement`; if no INPUT/TEXTAREA is focused, call `win.blur()` to prevent non-input clicks from keeping the window active.
+
+Requires `koffi` in `dependencies` (pure-JS FFI, no native compilation needed).
+
+**⚠️ Do NOT use `thickFrame: false`** — this removes `WS_THICKFRAME` and causes DWM to miscalculate client area to 0, making the pet completely invisible.
+
+## Other Files Added for Windows Port
+
+| File | Purpose |
+|---|---|
+| `.electronignore` | Prevents electron-builder from reading parent `.gitignore` (which excluded `dist/assets/`). Lists: `node_modules/`, `release/`, `electron/icon.iconset/`, `electron/icon.icns` |
 
 ---
 
@@ -102,7 +119,7 @@ cp asar_src/electron/icon.iconset/icon_256x256@2x.png build/icon.png
 **Do NOT blindly overwrite `electron/main.cjs`.** Instead:
 1. Open `asar_src/electron/main.cjs` and compare with `electron/main.cjs`
 2. Apply any new features/fixes from the original
-3. Preserve the three Windows-specific modifications (see table above)
+3. Preserve all Windows-specific modifications (see "Porting Changes" table above)
 
 ### Step 4 — Update version and rebuild
 
@@ -158,6 +175,43 @@ After winCodeSign is fixed, electron-builder also downloads:
 - `nsis-resources-3.4.1.7z` (~731 KB) — NSIS installer resources
 
 Both download cleanly (no symlinks). This is automatic and requires no intervention.
+
+---
+
+### Issue 3: `dist/assets/` excluded from build (pets invisible)
+
+**Symptom:** Built EXE launches but pets/sprites do not appear; window is blank.
+
+**Root cause:** electron-builder walks up the directory tree reading `.gitignore` files. The root `.gitignore` excluded `Dev/Windows/dist/assets/` (added during macOS dev). electron-builder silently skipped all PNGs.
+
+**Fix:** Created `Dev/Windows/.electronignore`. When this file exists, electron-builder stops reading parent `.gitignore` files and uses `.electronignore` as the sole exclusion list. Already committed — no action needed on fresh clones.
+
+---
+
+### Issue 4: DWM caption overlay ("BuddyDock" title bar ghost on focus loss)
+
+**Symptom:** After clicking another window, a faint title bar reading "BuddyDock" appears at the top of the pet window.
+
+**Root cause:** Windows 11 DWM draws a non-client area (caption badge) during the active→inactive focus transition, even on `transparent: true` + `frame: false` windows (DWM retains `WS_THICKFRAME` internally for compositing).
+
+**Approaches that FAILED:**
+- `thickFrame: false` — caused pets to disappear (DWM calculates client area as 0)
+- `win.setTitle('')` — no effect on DWM
+- `type: 'toolbar'` — silently ignored when combined with `frame: false`
+- `DWMWA_CAPTION_COLOR = DWMWA_COLOR_NONE` — only resets color, does not hide caption
+- `SetWindowTheme(hwnd, '', '')` alone — not sufficient
+- Removing `WS_MAXIMIZEBOX / WS_MINIMIZEBOX / WS_SYSMENU` alone — not sufficient
+
+**Fix:** Add `WS_EX_NOACTIVATE (0x08000000)` to `GWL_EXSTYLE` via koffi. Window never becomes the active window so DWM never draws the caption. Confirmed by debug log:
+```
+GWL_EXSTYLE before: 0x00000008   (WS_EX_TOPMOST only)
+GWL_EXSTYLE after:  0x08000008   (WS_EX_TOPMOST + WS_EX_NOACTIVATE)
+→ caption disappeared ✓
+```
+
+**Edge case — settings input fields:** Chromium bypasses `WS_EX_NOACTIVATE` internally when focusing INPUT/TEXTAREA for keyboard input. Fix: re-apply `WS_EX_NOACTIVATE` on every `blur` event; on `focus`, check `document.activeElement` and call `win.blur()` if no input is active.
+
+Full code is in the `try { ... }` koffi block in `electron/main.cjs`. Requires `koffi` in `dependencies`.
 
 ---
 

@@ -59,33 +59,150 @@ ERROR: Cannot create symbolic link : A required privilege is not held by the cli
 
 > 此 fix 永久有效（Cache 不會自動清除），下次 build 無需重做。
 
-### 0.4 Build 指令（必加環境變數）
+### 0.4 已知問題：`dist/assets/` 遭 `.gitignore` 排除導致 build 產物缺少資源
+
+**症狀：** 打包後的 EXE 執行時寵物不顯示，或開啟空白視窗。
+
+**原因：** `electron-builder` 除了讀取專案目錄的 `.gitignore`，也會往上讀取**父目錄**的 `.gitignore`。若根目錄的 `.gitignore` 含有 `Dev/Windows/dist/assets/`（因為 macOS 開發時常將 dist/ 排除），`electron-builder` 打包時就會跳過這些圖片資源。
+
+**修法：** 在 `Dev/Windows/` 目錄建立 `.electronignore` 檔案，告訴 `electron-builder` 只以此檔為準，忽略父目錄 `.gitignore`：
+
+```
+# Dev/Windows/.electronignore
+node_modules/
+release/
+electron/icon.iconset/
+electron/icon.icns
+```
+
+`.electronignore` 存在時，`electron-builder` 不再往上查找 `.gitignore`，`dist/assets/` 因此被正確納入打包。
+
+> 此檔已建立並納入版本控制。升版移植時無需再處理。
+
+---
+
+### 0.5 Build 指令（必加環境變數）
 
 ```bash
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
 ```
 
-`CSC_IDENTITY_AUTO_DISCOVERY=false` 是必要的。省略會觸發 0.3 的 winCodeSign 問題。
+`CSC_IDENTITY_AUTO_DISCOVERY=false` 是必要的。省略會觸發 **0.3** 的 winCodeSign 問題。
 
-### 0.5 已知問題：失焦時出現 DWM caption overlay
+### 0.6 已知問題：失焦時出現 DWM caption overlay（完整 debug 紀錄）
 
 **症狀：** app 失去焦點後，視窗頂部出現淺白/淺藍色標題列，顯示「BuddyDock」文字。
 
-**原因：** Windows DWM 在 `transparent: true` + `frame: false` 組合下，仍可能在失焦時繪製 non-client area（caption overlay）。
+**根本原因：**  
+Windows 11 DWM 在 `transparent: true` + `frame: false` 組合下，底層仍保留 `WS_THICKFRAME`（DWM 合成器需要此 bit 才能渲染透明視窗）。當視窗從 active → inactive 時，DWM 會繪製 non-client area（caption badge）。Caption 的出現本質上是**焦點轉換**觸發的，不是 window style 直接決定的。
 
-**修法：** 在 `BrowserWindow` 建立時加入 `thickFrame: false`：
+---
+
+#### 嘗試過但失敗的方法
+
+| 方法 | 結果 | 原因 |
+|---|---|---|
+| `thickFrame: false`（BrowserWindow 選項） | **寵物完全消失** | Electron 透過此 option 移除 `WS_THICKFRAME`，DWM 將 client area 計算為 0，renderer 畫面不顯示 |
+| `win.setTitle('')` | 無效 | `page-title-updated` 事件攔截後仍無法影響 DWM caption 繪製 |
+| `type: 'toolbar'` + `frame: false` | 無效 | Electron 文件明確指出兩者不能同時使用，`type` 被靜默忽略 |
+| `DwmSetWindowAttribute(DWMWA_CAPTION_COLOR, DWMWA_COLOR_NONE)` | 無效 | 此 API 僅還原 caption 顏色至系統預設，不會隱藏 caption |
+| `SetWindowTheme(hwnd, '', '')` 單獨使用 | 無效 | 移除 visual theme，但 DWM caption 繪製由焦點轉換控制，不受 theme 影響 |
+| 透過 `SetWindowLongW` 移除 `WS_MAXIMIZEBOX / WS_MINIMIZEBOX / WS_SYSMENU` | 無效（單獨使用） | Debug log 確認：原始 `GWL_STYLE = 0x14030000`，清除後 `0x14000000`。Caption 依然出現 |
+
+**Debug log（失敗階段）：**
+```
+koffi: OK
+hwnd: 5639042
+GWL_STYLE before: 0x14030000
+GWL_STYLE after:  0x14000000
+GWL_EXSTYLE before: 0x00000008   ← WS_EX_TOPMOST only
+```
+
+---
+
+#### 有效修法：`WS_EX_NOACTIVATE`
+
+**關鍵洞察：** Caption badge 是「視窗成為 active window」後失去焦點時出現的。若視窗從未成為 active window，DWM 就不會繪製 caption。
+
+**解法：** 透過 `koffi`（pure-JS FFI library，不需編譯原生模組）呼叫 Win32 API，在 Extended Window Style 加入 `WS_EX_NOACTIVATE (0x08000000)`：
 
 ```js
-new BrowserWindow({
-  transparent: true,
-  frame: false,
-  thickFrame: false,   // 停用 DWM thick frame，避免失焦時出現 caption overlay
-  backgroundColor: '#00000000',
-  // ...其他設定
+const koffi   = require('koffi')
+const user32  = koffi.load('user32.dll')
+const uxtheme = koffi.load('uxtheme.dll')
+
+const GetWindowLongW = user32.func('int GetWindowLongW(uint64 hWnd, int nIndex)')
+const SetWindowLongW = user32.func('int SetWindowLongW(uint64 hWnd, int nIndex, int dwNewLong)')
+const SetWindowPos   = user32.func('int SetWindowPos(uint64 hWnd, uint64 hWndAfter, int x, int y, int cx, int cy, uint32 uFlags)')
+const SetWindowTheme = uxtheme.func('int SetWindowTheme(uint64 hwnd, str16 pszSubAppName, str16 pszSubIdList)')
+
+const hwnd = win.getNativeWindowHandle().readBigUInt64LE(0)
+
+// 加入 WS_EX_NOACTIVATE，並呼叫 SetWindowPos 套用變更
+const ex = GetWindowLongW(hwnd, -20)
+SetWindowLongW(hwnd, -20, ex | 0x08000000)
+SetWindowPos(hwnd, BigInt(0), 0, 0, 0, 0, 0x0037)   // SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+SetWindowTheme(hwnd, '', '')                          // 停用 visual theme（清除殘留 DWM 繪製）
+```
+
+**Debug log（成功後）：**
+```
+koffi: OK
+hwnd: 12586784
+GWL_STYLE before: 0x14030000
+GWL_STYLE after:  0x14000000
+GWL_EXSTYLE before: 0x00000008   ← WS_EX_TOPMOST
+GWL_EXSTYLE after:  0x08000008   ← WS_EX_TOPMOST + WS_EX_NOACTIVATE
+```
+結果：**「caption 消失了！」**✓
+
+---
+
+#### 邊緣情形：設定面板輸入框
+
+**問題：** `WS_EX_NOACTIVATE` 防止大多數互動觸發焦點，但 Chromium 在 input/textarea 獲得游標時，內部會呼叫 `SetFocus()` / `SetActiveWindow()` 繞過此 style。結果：輸入框仍可正常使用，但完成輸入後點擊其他視窗時，caption 短暫出現。
+
+**解法：** 在 `blur` / `focus` 事件中動態管理 WS_EX_NOACTIVATE：
+
+```js
+const applyNoActivate = () => {
+  const ex = GetWindowLongW(hwnd, -20)
+  SetWindowLongW(hwnd, -20, ex | 0x08000000)
+  SetWindowPos(hwnd, BigInt(0), 0, 0, 0, 0, 0x0037)
+}
+
+// blur 時立即 re-apply，badge 一出現就消失
+win.on('blur', applyNoActivate)
+
+// focus 時若沒有 input 在作用中（非輸入點擊），立即 blur
+win.on('focus', () => {
+  setTimeout(async () => {
+    if (win.isDestroyed()) return
+    try {
+      const inputActive = await win.webContents.executeJavaScript(
+        '(document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA")'
+      )
+      if (!inputActive) win.blur()
+    } catch (_) {}
+  }, 50)
 })
 ```
 
-> 此修改已納入 `Dev/Windows/electron/main.cjs`，升版移植時注意保留。
+**結果：** 輸入框正常可用；點擊其他視窗時 caption badge 消失。✓
+
+---
+
+#### 相依套件
+
+此修法需要 `koffi`（pure-JS Win32 FFI，不需編譯 native addon）：
+
+```bash
+npm install koffi
+```
+
+已加入 `package.json` 的 `dependencies`（非 devDependencies，因為 runtime 需要）。
+
+> 升版移植時，此整個 `try { ... }` 區塊必須完整保留在 `electron/main.cjs` 中。
 
 ---
 

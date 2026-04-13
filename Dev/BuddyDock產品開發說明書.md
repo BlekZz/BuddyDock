@@ -100,6 +100,8 @@ npm run dist:mac    # electron-builder 打包 DMG
 
 ### 步驟二：Windows 移植
 
+> **必讀：** 開始前請先閱讀 `Dev/Windows/BuddyDock-Windows移植逆向工程書.md` **第零章**，其中記錄了 Windows 開發環境需求、已知的 build 問題與修法（winCodeSign symlink 錯誤、DWM caption overlay 等）。省略此步驟容易在 build 階段重複踩坑。
+
 參閱 `Dev/Windows/CLAUDE.md` 的詳細移植步驟，核心流程：
 
 ```bash
@@ -117,12 +119,13 @@ cd Dev/Windows
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
 ```
 
-**Windows 端必須保留的三處修改（勿覆蓋）：**
+**Windows 端必須保留的四處修改（勿覆蓋）：**
 
 | 位置 | 修改內容 | 原因 |
 |---|---|---|
 | Tray 建立 | 移除 `icon.setTemplateImage(true)` | macOS 專用 API |
 | BrowserWindow | 加入 `backgroundColor: '#00000000'` | Windows 透明視窗需要 |
+| BrowserWindow | 加入 `thickFrame: false` | 防止失焦時 DWM 繪製 caption overlay（標題列鬼影） |
 | alwaysOnTop | 改為 `win.setAlwaysOnTop(true, 'screen-saver')` | 覆蓋全螢幕應用 |
 
 ### 步驟三：複製到 Release 資料夾

@@ -167,6 +167,7 @@ function createWindow() {
     hasShadow: false,
     resizable: false,
     skipTaskbar: true,
+    thickFrame: false,              // 停用 DWM thick frame，避免失焦時出現 caption overlay
     backgroundColor: '#00000000',   // Windows 透明視窗需明確指定
     webPreferences: {
       nodeIntegration: false,

@@ -4,6 +4,91 @@
 
 ---
 
+## 零、Windows 開發環境需求與已知問題
+
+> **在進行任何 build 之前，請先確認本節環境與閱讀已知問題，可避免重複踩坑。**
+
+### 0.1 確認版本（實測可用組合）
+
+| 工具 | 版本 | 備註 |
+|---|---|---|
+| Node.js | v25.9.0 | 低版本可能有相容性問題 |
+| npm | 隨 Node.js | 無特殊版本要求 |
+| electron-builder | 25.1.8 | `package.json` devDependencies 已鎖定 |
+| Electron | 35.7.5 | 由 electron-builder 自動下載 |
+| 作業系統 | Windows 10 / 11 64-bit | 測試環境：Windows 11 Pro 10.0.26200 |
+
+### 0.2 首次 build 前必做：安裝依賴
+
+clone 或複製專案後，**第一次** 必須先執行：
+
+```bash
+cd Dev/Windows
+npm install
+```
+
+`node_modules/` 不入 git，省略此步驟會導致 `electron-builder is not recognized` 錯誤。
+
+### 0.3 已知問題：winCodeSign symlink 失敗
+
+**症狀：**
+```
+ERROR: Cannot create symbolic link : A required privilege is not held by the client.
+  : .../winCodeSign-2.6.0/darwin/10.12/lib/libcrypto.dylib
+  : .../winCodeSign-2.6.0/darwin/10.12/lib/libssl.dylib
+```
+
+**原因：** electron-builder 下載 `winCodeSign-2.6.0.7z` 時，解壓內含 macOS dylib symlink，Windows 在非管理員 / 非開發者模式下不允許建立 symlink。
+
+**修法（每台新機器只需做一次）：**
+
+1. 先跑一次 build 讓它失敗（目的是讓 electron-builder 下載並部分解壓到 temp dir）
+2. 查看 Cache 目錄，會有數字命名的 temp dir：
+   ```bash
+   ls "$LOCALAPPDATA/electron-builder/Cache/winCodeSign/"
+   # 例如：307447019  307447019.7z  554076343  554076343.7z ...
+   ```
+3. 複製其中一個 temp dir 為正式目錄名，並補建兩個空 stub 檔：
+   ```bash
+   cp -r "$LOCALAPPDATA/electron-builder/Cache/winCodeSign/307447019" \
+          "$LOCALAPPDATA/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0"
+   touch "$LOCALAPPDATA/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0/darwin/10.12/lib/libcrypto.dylib"
+   touch "$LOCALAPPDATA/electron-builder/Cache/winCodeSign/winCodeSign-2.6.0/darwin/10.12/lib/libssl.dylib"
+   ```
+4. 再次執行 `CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist`，即可成功
+
+> 此 fix 永久有效（Cache 不會自動清除），下次 build 無需重做。
+
+### 0.4 Build 指令（必加環境變數）
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
+```
+
+`CSC_IDENTITY_AUTO_DISCOVERY=false` 是必要的。省略會觸發 0.3 的 winCodeSign 問題。
+
+### 0.5 已知問題：失焦時出現 DWM caption overlay
+
+**症狀：** app 失去焦點後，視窗頂部出現淺白/淺藍色標題列，顯示「BuddyDock」文字。
+
+**原因：** Windows DWM 在 `transparent: true` + `frame: false` 組合下，仍可能在失焦時繪製 non-client area（caption overlay）。
+
+**修法：** 在 `BrowserWindow` 建立時加入 `thickFrame: false`：
+
+```js
+new BrowserWindow({
+  transparent: true,
+  frame: false,
+  thickFrame: false,   // 停用 DWM thick frame，避免失焦時出現 caption overlay
+  backgroundColor: '#00000000',
+  // ...其他設定
+})
+```
+
+> 此修改已納入 `Dev/Windows/electron/main.cjs`，升版移植時注意保留。
+
+---
+
 ## 一、可行性評估
 
 BuddyDock 的技術底層是 **Electron + React**，這是一個完全跨平台的組合。macOS 版本的限制僅在於：

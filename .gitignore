@@ -1,0 +1,10 @@
+# Original DMG (226 MB — too large for GitHub)
+*.dmg
+
+# Claude Code internal files
+.claude/
+
+# BuddyWindows — generated/installed artifacts
+BuddyWindows/node_modules/
+BuddyWindows/dist/
+BuddyWindows/release/
